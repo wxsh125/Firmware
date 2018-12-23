@@ -32,6 +32,7 @@
  ****************************************************************************/
 
 #include <px4_time.h>
+#include <math.h>
 #include "PWMSim.hpp"
 
 #include <uORB/topics/multirotor_motor_limits.h>
