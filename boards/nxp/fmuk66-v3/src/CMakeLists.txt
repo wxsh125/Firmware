@@ -31,23 +31,22 @@
 #
 ############################################################################
 
-px4_add_library(drivers_board
+add_library(drivers_board
 	autoleds.c
 	automount.c
-	can.c
+	i2c.cpp
 	init.c
 	led.c
 	sdhc.c
-	spi.c
-	timer_config.c
+	spi.cpp
+	timer_config.cpp
 	usb.c
 )
 
 target_link_libraries(drivers_board
 	PRIVATE
-		nuttx_apps # up_cxxinitialize
 		nuttx_arch # sdio
 		nuttx_drivers # sdio
 		drivers__led # drv_led_start
-		parameters # param_init
+		px4_layer
 	)

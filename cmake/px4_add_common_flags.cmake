@@ -31,8 +31,6 @@
 #
 ############################################################################
 
-include(px4_base)
-
 #=============================================================================
 #
 #	px4_add_common_flags
@@ -51,10 +49,17 @@ function(px4_add_common_flags)
 		-fdata-sections
 		-ffunction-sections
 		-fomit-frame-pointer
-		-funsafe-math-optimizations
+		-fmerge-all-constants
+
+		#-funsafe-math-optimizations # Enables -fno-signed-zeros, -fno-trapping-math, -fassociative-math and -freciprocal-math
+		-fno-signed-zeros	# Allow optimizations for floating-point arithmetic that ignore the signedness of zero
+		-fno-trapping-math	# Compile code assuming that floating-point operations cannot generate user-visible traps
+		#-fassociative-math	# Allow re-association of operands in series of floating-point operations
+		-freciprocal-math	# Allow the reciprocal of a value to be used instead of dividing by the value if this enables optimizations
+
+		-fno-math-errno		# Do not set errno after calling math functions that are executed with a single instruction, e.g., sqrt
 
 		-fno-strict-aliasing
-		-fno-math-errno
 
 		# visibility
 		-fvisibility=hidden
@@ -66,6 +71,7 @@ function(px4_add_common_flags)
 		-Werror
 
 		-Warray-bounds
+		-Wcast-align
 		-Wdisabled-optimization
 		-Wdouble-promotion
 		-Wfatal-errors
@@ -80,24 +86,25 @@ function(px4_add_common_flags)
 		-Wunused-variable
 
 		# disabled warnings
-		-Wno-implicit-fallthrough # set appropriate level and update
 		-Wno-missing-field-initializers
 		-Wno-missing-include-dirs # TODO: fix and enable
 		-Wno-unused-parameter
+
 		)
 
 	# compiler specific flags
-	if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
+	if (("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang") OR ("${CMAKE_CXX_COMPILER_ID}" MATCHES "AppleClang"))
 
 		# force color for clang (needed for clang + ccache)
 		add_compile_options(-fcolor-diagnostics)
+		# force absolute paths
+		add_compile_options(-fdiagnostics-absolute-paths)
 
 		# QuRT 6.4.X compiler identifies as Clang but does not support this option
 		if (NOT "${PX4_PLATFORM}" STREQUAL "qurt")
 			add_compile_options(
 				-Qunused-arguments
 
-				-Wno-address-of-packed-member
 				-Wno-unknown-warning-option
 				-Wno-unused-const-variable
 				-Wno-varargs
@@ -109,6 +116,10 @@ function(px4_add_common_flags)
 		if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 4.9)
 			# force color for gcc > 4.9
 			add_compile_options(-fdiagnostics-color=always)
+		endif()
+
+		if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 9.3)
+			add_compile_options(-Wno-stringop-truncation)
 		endif()
 
 		add_compile_options(
@@ -127,9 +138,9 @@ function(px4_add_common_flags)
 		add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fcheck-new>)
 
 	elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-	  message(FATAL_ERROR "Intel compiler not yet supported")
+		message(FATAL_ERROR "Intel compiler not yet supported")
 	elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-	  message(FATAL_ERROR "MS compiler not yet supported")
+		message(FATAL_ERROR "MS compiler not yet supported")
 	endif()
 
 	# C only flags
@@ -165,18 +176,22 @@ function(px4_add_common_flags)
 
 	include_directories(
 		${PX4_BINARY_DIR}
-		${PX4_BINARY_DIR}/src
 		${PX4_BINARY_DIR}/src/lib
-		${PX4_BINARY_DIR}/src/modules
+
+		${PX4_SOURCE_DIR}/platforms/${PX4_PLATFORM}/src/px4/${PX4_CHIP_MANUFACTURER}/${PX4_CHIP}/include
+		${PX4_SOURCE_DIR}/platforms/${PX4_PLATFORM}/src/px4/common/include
+		${PX4_SOURCE_DIR}/platforms/common
+		${PX4_SOURCE_DIR}/platforms/common/include
 
 		${PX4_SOURCE_DIR}/src
 		${PX4_SOURCE_DIR}/src/include
 		${PX4_SOURCE_DIR}/src/lib
-		${PX4_SOURCE_DIR}/src/lib/DriverFramework/framework/include
 		${PX4_SOURCE_DIR}/src/lib/matrix
 		${PX4_SOURCE_DIR}/src/modules
-		${PX4_SOURCE_DIR}/src/platforms
-		)
+	)
+	if(EXISTS ${PX4_BOARD_DIR}/include)
+		include_directories(${PX4_BOARD_DIR}/include)
+	endif()
 
 	add_definitions(
 		-DCONFIG_ARCH_BOARD_${PX4_BOARD_NAME}

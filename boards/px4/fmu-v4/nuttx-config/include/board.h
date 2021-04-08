@@ -40,6 +40,7 @@
 /************************************************************************************
  * Included Files
  ************************************************************************************/
+#include "board_dma_map.h"
 
 #include <nuttx/config.h>
 #ifndef __ASSEMBLY__
@@ -53,7 +54,7 @@
  ************************************************************************************/
 
 /* Clocking *************************************************************************/
-/* The PX4FMUV2 uses a 24MHz crystal connected to the HSE.
+/* The PX4FMUV4 uses a 24MHz crystal connected to the HSE.
  *
  * This is the "standard" configuration as set up by arch/arm/src/stm32f40xx_rcc.c:
  *   System Clock source           : PLL (HSE)
@@ -195,17 +196,6 @@
 #  define SDIO_SDXFR_CLKDIV     (2 << SDIO_CLKCR_CLKDIV_SHIFT)
 #endif
 
-/* DMA Channl/Stream Selections *****************************************************/
-/* Stream selections are arbitrary for now but might become important in the future
- * is we set aside more DMA channels/streams.
- *
- * SDIO DMA
- *   DMAMAP_SDIO_1 = Channel 4, Stream 3 <- may later be used by SPI DMA
- *   DMAMAP_SDIO_2 = Channel 4, Stream 6
- */
-
-#define DMAMAP_SDIO DMAMAP_SDIO_1
-
 /* Alternate function pin selections ************************************************/
 
 /*
@@ -235,9 +225,6 @@
 
 /* UART8 has no alternate pin config */
 
-/* UART RX DMA configurations */
-#define DMAMAP_USART1_RX DMAMAP_USART1_RX_2
-#define DMAMAP_USART6_RX DMAMAP_USART6_RX_2
 
 /*
  * CAN
@@ -265,14 +252,19 @@
  *
  * There are sensors on SPI1, and SPI2 is connected to the FRAM.
  */
-#define GPIO_SPI1_MISO	(GPIO_SPI1_MISO_1|GPIO_SPEED_50MHz)
-#define GPIO_SPI1_MOSI	(GPIO_SPI1_MOSI_1|GPIO_SPEED_50MHz)
-#define GPIO_SPI1_SCK	(GPIO_SPI1_SCK_1|GPIO_SPEED_50MHz)
+#define GPIO_SPI1_MISO  (GPIO_SPI1_MISO_1|GPIO_SPEED_50MHz)
+#define GPIO_SPI1_MOSI  (GPIO_SPI1_MOSI_1|GPIO_SPEED_50MHz)
+#define GPIO_SPI1_SCK   (GPIO_SPI1_SCK_1|GPIO_SPEED_50MHz)
 
+#define GPIO_SPI2_MISO  (GPIO_SPI2_MISO_1|GPIO_SPEED_50MHz)
+#define GPIO_SPI2_MOSI  (GPIO_SPI2_MOSI_1|GPIO_SPEED_50MHz)
+#define GPIO_SPI2_SCK   (GPIO_SPI2_SCK_1|GPIO_SPEED_50MHz)
 
-#define GPIO_SPI2_MISO	(GPIO_SPI2_MISO_1|GPIO_SPEED_50MHz)
-#define GPIO_SPI2_MOSI	(GPIO_SPI2_MOSI_1|GPIO_SPEED_50MHz)
-#define GPIO_SPI2_SCK	(GPIO_SPI2_SCK_1|GPIO_SPEED_50MHz)
+#if defined(CONFIG_STM32_SPI4)
+#  define GPIO_SPI4_MISO  (GPIO_SPI4_MISO_1|GPIO_SPEED_50MHz)
+#  define GPIO_SPI4_MOSI  (GPIO_SPI4_MOSI_1|GPIO_SPEED_50MHz)
+#  define GPIO_SPI4_SCK   (GPIO_SPI4_SCK_1|GPIO_SPEED_50MHz)
+#endif
 
 /* Board provides GPIO or other Hardware for signaling to timing analyzer */
 
@@ -303,39 +295,5 @@
 # define PROBE_MARK(n)
 #endif
 
-/************************************************************************************
- * Public Data
- ************************************************************************************/
 
-#ifndef __ASSEMBLY__
-
-#undef EXTERN
-#if defined(__cplusplus)
-#define EXTERN extern "C"
-extern "C" {
-#else
-#define EXTERN extern
-#endif
-
-/************************************************************************************
- * Public Function Prototypes
- ************************************************************************************/
-/************************************************************************************
- * Name: stm32_boardinitialize
- *
- * Description:
- *   All STM32 architectures must provide the following entry point.  This entry point
- *   is called early in the initialization -- after all memory has been configured
- *   and mapped but before any devices have been initialized.
- *
- ************************************************************************************/
-
-EXTERN void stm32_boardinitialize(void);
-
-#undef EXTERN
-#if defined(__cplusplus)
-}
-#endif
-
-#endif /* __ASSEMBLY__ */
 #endif  /* __ARCH_BOARD_BOARD_H */

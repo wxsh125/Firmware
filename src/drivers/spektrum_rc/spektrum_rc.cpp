@@ -39,9 +39,11 @@
  * on the serial port. By default port J12 (next to J13, power module side) is used.
  */
 
-#include <px4_tasks.h>
-#include <px4_posix.h>
-#include <px4_getopt.h>
+#include <string.h>
+
+#include <px4_platform_common/tasks.h>
+#include <px4_platform_common/posix.h>
+#include <px4_platform_common/getopt.h>
 
 #include <lib/rc/dsm.h>
 #include <drivers/drv_rc_input.h>
@@ -211,8 +213,6 @@ int start(int argc, char *argv[])
 		PX4_WARN("already running");
 		return -1;
 	}
-
-	ASSERT(_task_handle == -1);
 
 	_task_should_exit = false;
 

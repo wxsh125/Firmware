@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2012 PX4 Development Team. All rights reserved.
+ *  Copyright (C) 2012-2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,11 +33,10 @@
 
 /**
  * @file test_file2.c
- *
  * File write test.
  */
 
-#include <px4_defines.h>
+#include <px4_platform_common/defines.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -47,7 +46,7 @@
 #include <perf/perf_counter.h>
 #include <string.h>
 #include <stdlib.h>
-#include <px4_getopt.h>
+#include <px4_platform_common/getopt.h>
 
 #include "tests_main.h"
 

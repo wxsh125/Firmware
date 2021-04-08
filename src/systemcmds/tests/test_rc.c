@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012, 2013 PX4 Development Team. All rights reserved.
+ *  Copyright (C) 2012-2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,10 +34,9 @@
 /**
  * @file test_rc.c
  * Tests RC input.
- *
  */
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
 
 #include <sys/types.h>
 
@@ -48,7 +47,6 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#include <arch/board/board.h>
 #include <drivers/drv_pwm_output.h>
 #include <drivers/drv_rc_input.h>
 #include <drivers/drv_hrt.h>

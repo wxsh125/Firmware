@@ -3,79 +3,87 @@ px4_add_board(
 	PLATFORM nuttx
 	VENDOR omnibus
 	MODEL f4sd
+	LABEL default
 	TOOLCHAIN arm-none-eabi
 	ARCHITECTURE cortex-m4
+	CONSTRAINED_MEMORY
 	ROMFSROOT px4fmu_common
-
+	CONSTRAINED_FLASH
 	SERIAL_PORTS
 		TEL2:/dev/ttyS1
 		URT6:/dev/ttyS2
-
 	DRIVERS
+		adc/board_adc
 		#barometer # all available barometer drivers
 		barometer/bmp280
 		#batt_smbus
 		#camera_trigger
 		#differential_pressure # all available differential pressure drivers
 		#distance_sensor # all available distance sensor drivers
+		dshot
 		gps
-		#heater
-		#imu # all available imu drivers
-		imu/mpu6000
+		imu/invensense/icm20602
+		imu/invensense/mpu6000
 		#irlock
-		#lights/blinkm
-		#lights/oreoled
 		lights/rgbled
 		#magnetometer # all available magnetometer drivers
 		magnetometer/hmc5883
-		#mkblctrl
+		#optical_flow # all available optical flow drivers
+		osd
 		#pca9685
 		#pwm_input
 		#pwm_out_sim
-		px4flow
-		px4fmu
+		pwm_out
 		rc_input
-		stm32
-		stm32/adc
-		#stm32/tone_alarm
-		#tap_esc
 		#telemetry # all available telemetry drivers
 		telemetry/frsky_telemetry
 		#test_ppm
-
 	MODULES
+		#airspeed_selector
 		attitude_estimator_q
+		battery_status
 		#camera_feedback
 		commander
 		dataman
 		ekf2
+		#esc_battery
 		events
+		flight_mode_manager
 		#fw_att_control
 		#fw_pos_control_l1
-		#gnd_att_control
-		#gnd_pos_control
+		gyro_calibration
+		#gyro_fft
 		land_detector
-		landing_target_estimator
+		#landing_target_estimator
 		load_mon
-		local_position_estimator
+		#local_position_estimator
 		logger
 		mavlink
 		mc_att_control
+		mc_hover_thrust_estimator
 		mc_pos_control
+		mc_rate_control
+		#micrortps_bridge
 		navigator
-		#position_estimator_inav
+		rc_update
+		#rover_pos_control
 		sensors
+		#sih
+		#temperature_compensation
+		#uuv_att_control
+		#uuv_pos_control
 		#vmount
 		#vtol_att_control
-		#wind_estimator
-
 	SYSTEMCMDS
 		#bl_update
-		config
+		dmesg
 		dumpfile
 		esc_calib
+		#gpio
 		hardfault_log
+		i2cdetect
 		led_control
+		#mft
 		mixer
 		#motor_ramp
 		motor_test
@@ -87,25 +95,27 @@ px4_add_board(
 		reboot
 		reflect
 		sd_bench
-		shutdown
+		#serial_test
+		#system_time
 		#tests # tests and test runner
 		top
-		topic_listener
+		#topic_listener
 		tune_control
+		uorb
 		usb_connected
 		ver
-
+		work_queue
 	EXAMPLES
-		#bottle_drop # OBC challenge
+		#fake_gps
+		#fake_gyro
+		#fake_magnetometer
 		#fixedwing_control # Tutorial code from https://px4.io/dev/example_fixedwing_control
+		#hello
 		#hwtest # Hardware test
 		#matlab_csv_serial
-		#publisher
-		#px4_mavlink_debug # Tutorial code from https://px4.io/dev/debug_values
-		#px4_simple_app # Tutorial code from https://px4.io/dev/px4_simple_app
+		#px4_mavlink_debug # Tutorial code from http://dev.px4.io/en/debug/debug_values.html
+		#px4_simple_app # Tutorial code from http://dev.px4.io/en/apps/hello_sky.html
 		#rover_steering_control # Rover example app
-		#segway
-		#subscriber
 		#uuv_example_app
-
+		#work_item
 	)

@@ -45,9 +45,8 @@
  * Included Files
  ****************************************************************************/
 
-#include <px4_config.h>
-#include <px4_tasks.h>
-#include <px4_time.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/tasks.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -55,7 +54,6 @@
 #include <debug.h>
 #include <errno.h>
 
-#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -73,36 +71,17 @@
 #include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
-#include <systemlib/cpuload.h>
-#include <perf/perf_counter.h>
-#include <systemlib/err.h>
 
-#include <parameters/param.h>
+#include <px4_arch/io_timer.h>
+#include <px4_platform_common/init.h>
+#include <px4_platform/board_dma_alloc.h>
 
 /****************************************************************************
  * Pre-Processor Definitions
  ****************************************************************************/
 
-/* Configuration ************************************************************/
-
-/* Debug ********************************************************************/
-
-#ifdef CONFIG_CPP_HAVE_VARARGS
-#  ifdef CONFIG_DEBUG
-#    define message(...) syslog(__VA_ARGS__)
-#  else
-#    define message(...) printf(__VA_ARGS__)
-#  endif
-#else
-#  ifdef CONFIG_DEBUG
-#    define message syslog
-#  else
-#    define message printf
-#  endif
-#endif
-
 /*
- * Ideally we'd be able to get these from up_internal.h,
+ * Ideally we'd be able to get these from arm_internal.h,
  * but since we want to be able to disable the NuttX use
  * of leds for system indication at will and there is no
  * separate switch, we need to build independent of the
@@ -134,8 +113,8 @@ __EXPORT void board_peripheral_reset(int ms)
 	stm32_gpiowrite(GPIO_VDD_5V_PERIPH_EN, 1);
 
 	/* wait for the peripheral rail to reach GND */
-	px4_usleep(ms * 1000);
-	warnx("reset done, %d ms", ms);
+	usleep(ms * 1000);
+	syslog(LOG_DEBUG, "reset done, %d ms\n", ms);
 
 	/* re-enable power */
 
@@ -158,14 +137,11 @@ __EXPORT void board_peripheral_reset(int ms)
 __EXPORT void board_on_reset(int status)
 {
 	UNUSED(status);
-	/* configure the GPIO pins to outputs and keep them low */
 
-	stm32_configgpio(GPIO_GPIO0_OUTPUT);
-	stm32_configgpio(GPIO_GPIO1_OUTPUT);
-	stm32_configgpio(GPIO_GPIO2_OUTPUT);
-	stm32_configgpio(GPIO_GPIO3_OUTPUT);
-	stm32_configgpio(GPIO_GPIO4_OUTPUT);
-	stm32_configgpio(GPIO_GPIO5_OUTPUT);
+	/* configure the GPIO pins to outputs and keep them low */
+	for (int i = 0; i < DIRECT_PWM_OUTPUT_CHANNELS; ++i) {
+		px4_arch_configgpio(io_timer_channel_get_gpio_output(i));
+	}
 
 	/* On resets invoked from system (not boot) insure we establish a low
 	 * output state (discharge the pins) on PWM pins before they become inputs.
@@ -184,7 +160,7 @@ __EXPORT void board_on_reset(int status)
 		up_mdelay(400);
 
 		/* on reboot (status >= 0) reset sensors and peripherals */
-		board_spi_reset(10);
+		board_spi_reset(10, 0xffff);
 	}
 }
 
@@ -333,7 +309,8 @@ stm32_boardinitialize(void)
 
 	/* configure power supply control/sense pins */
 	stm32_configgpio(GPIO_VDD_5V_PERIPH_EN);
-	stm32_configgpio(GPIO_VDD_3V3_SENSORS_EN);
+	board_control_spi_sensors_power_configgpio();
+	board_control_spi_sensors_power(true, 0xffff);
 	stm32_configgpio(GPIO_VDD_BRICK_VALID);
 	stm32_configgpio(GPIO_VDD_SERVO_VALID);
 	stm32_configgpio(GPIO_VDD_USB_VALID);
@@ -385,16 +362,8 @@ static struct sdio_dev_s *sdio;
 
 __EXPORT int board_app_initialize(uintptr_t arg)
 {
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
-
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
-
 	/* Ensure the power is on 1 ms before we drive the GPIO pins */
-	px4_usleep(1000);
+	usleep(1000);
 
 	if (OK == determin_hw_version(&hw_version, & hw_revision)) {
 		switch (hw_version) {
@@ -428,7 +397,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 				hw_version = HW_VER_FMUV3_STATE;
 				hw_type[1]++;
 				hw_type[2] = '0';
-				message("\nPixhack V3 detected, forcing to fmu-v3");
+				syslog(LOG_INFO, "\nPixhack V3 detected, forcing to fmu-v3");
 
 			} else {
 
@@ -443,32 +412,24 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 			/* questionable px4_fmu-v2 hardware, try forcing regular FMUv2 (not much else we can do) */
 
-			message("\nbad version detected, forcing to fmu-v2");
+			syslog(LOG_ERR, "\nbad version detected, forcing to fmu-v2");
 			hw_version = HW_VER_FMUV2_STATE;
 			break;
 		}
 
-		message("\nFMUv2 ver 0x%1X : Rev %x %s\n", hw_version, hw_revision, hw_type);
+		syslog(LOG_DEBUG, "\nFMUv2 ver 0x%1X : Rev %x %s\n", hw_version, hw_revision, hw_type);
 	}
 
-	/* configure SPI interfaces */
+	/* configure SPI interfaces (after the hw is determined) */
 	stm32_spiinitialize();
 
-	/* configure the high-resolution time/callout interface */
-	hrt_init();
-
-	param_init();
+	px4_platform_init();
 
 	/* configure the DMA allocator */
 
 	if (board_dma_alloc_init() < 0) {
-		message("DMA alloc FAILED");
+		syslog(LOG_ERR, "DMA alloc FAILED\n");
 	}
-
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
 
 	/* set up the serial DMA polling */
 	static struct hrt_call serial_dma_call;
@@ -497,10 +458,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	/* Configure SPI-based devices */
 
-	spi1 = stm32_spibus_initialize(PX4_SPI_BUS_SENSORS);
+	spi1 = stm32_spibus_initialize(1);
 
 	if (!spi1) {
-		message("[boot] FAILED to initialize SPI port %d\n", PX4_SPI_BUS_SENSORS);
+		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port %d\n", 1);
 		led_on(LED_AMBER);
 		return -ENODEV;
 	}
@@ -513,10 +474,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	/* Get the SPI port for the FRAM */
 
-	spi2 = stm32_spibus_initialize(PX4_SPI_BUS_RAMTRON);
+	spi2 = stm32_spibus_initialize(2);
 
 	if (!spi2) {
-		message("[boot] FAILED to initialize SPI port %d\n", PX4_SPI_BUS_RAMTRON);
+		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port %d\n", 2);
 		led_on(LED_AMBER);
 		return -ENODEV;
 	}
@@ -529,10 +490,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETBITS(spi2, 8);
 	SPI_SETMODE(spi2, SPIDEV_MODE3);
 
-	spi4 = stm32_spibus_initialize(PX4_SPI_BUS_EXT);
+	spi4 = stm32_spibus_initialize(4);
 
 	if (!spi4) {
-		message("[boot] FAILED to initialize SPI port %d\n", PX4_SPI_BUS_EXT);
+		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port %d\n", 4);
 		led_on(LED_AMBER);
 		return -ENODEV;
 	}
@@ -549,7 +510,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	if (!sdio) {
 		led_on(LED_AMBER);
-		message("[boot] Failed to initialize SDIO slot %d\n", CONFIG_NSH_MMCSDSLOTNO);
+		syslog(LOG_ERR, "[boot] Failed to initialize SDIO slot %d\n", CONFIG_NSH_MMCSDSLOTNO);
 		return -ENODEV;
 	}
 
@@ -558,7 +519,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	if (ret != OK) {
 		led_on(LED_AMBER);
-		message("[boot] Failed to bind SDIO to the MMC/SD driver: %d\n", ret);
+		syslog(LOG_ERR, "[boot] Failed to bind SDIO to the MMC/SD driver: %d\n", ret);
 		return ret;
 	}
 
@@ -566,6 +527,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	sdio_mediachange(sdio, true);
 
 #endif
+
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	return OK;
 }

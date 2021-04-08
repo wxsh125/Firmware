@@ -42,8 +42,6 @@
 #include "tailsitter.h"
 #include "vtol_att_control_main.h"
 
-#define ARSP_YAW_CTRL_DISABLE 4.0f	// airspeed at which we stop controlling yaw during a front transition
-#define THROTTLE_TRANSITION_MAX 0.25f	// maximum added thrust above last value in transition
 #define PITCH_TRANSITION_FRONT_P1 -1.1f	// pitch angle to switch to TRANSITION_P2
 #define PITCH_TRANSITION_BACK -0.25f	// pitch angle to switch to MC
 
@@ -52,7 +50,7 @@ using namespace matrix;
 Tailsitter::Tailsitter(VtolAttitudeControl *attc) :
 	VtolType(attc)
 {
-	_vtol_schedule.flight_mode = MC_MODE;
+	_vtol_schedule.flight_mode = vtol_mode::MC_MODE;
 	_vtol_schedule.transition_start = 0;
 
 	_mc_roll_weight = 1.0f;
@@ -60,8 +58,6 @@ Tailsitter::Tailsitter(VtolAttitudeControl *attc) :
 	_mc_yaw_weight = 1.0f;
 
 	_flag_was_in_trans_mode = false;
-
-	_params_handles_tailsitter.front_trans_dur_p2 = param_find("VT_TRANS_P2_DUR");
 	_params_handles_tailsitter.fw_pitch_sp_offset = param_find("FW_PSP_OFF");
 }
 
@@ -69,10 +65,6 @@ void
 Tailsitter::parameters_update()
 {
 	float v;
-
-	/* vtol front transition phase 2 duration */
-	param_get(_params_handles_tailsitter.front_trans_dur_p2, &v);
-	_params_tailsitter.front_trans_dur_p2 = v;
 
 	param_get(_params_handles_tailsitter.fw_pitch_sp_offset, &v);
 	_params_tailsitter.fw_pitch_sp_offset = math::radians(v);
@@ -86,31 +78,39 @@ void Tailsitter::update_vtol_state()
 	 * For the backtransition the pitch is controlled in MC mode again and switches to full MC control reaching the sufficient pitch angle.
 	*/
 
-	Eulerf euler = Quatf(_v_att->q);
-	float pitch = euler.theta();
+	float pitch = Eulerf(Quatf(_v_att->q)).theta();
 
-	if (!_attc->is_fixed_wing_requested()) {
+	if (_vtol_vehicle_status->vtol_transition_failsafe) {
+		// Failsafe event, switch to MC mode immediately
+		_vtol_schedule.flight_mode = vtol_mode::MC_MODE;
+
+		//reset failsafe when FW is no longer requested
+		if (!_attc->is_fixed_wing_requested()) {
+			_vtol_vehicle_status->vtol_transition_failsafe = false;
+		}
+
+	} else if (!_attc->is_fixed_wing_requested()) {
 
 		switch (_vtol_schedule.flight_mode) { // user switchig to MC mode
-		case MC_MODE:
+		case vtol_mode::MC_MODE:
 			break;
 
-		case FW_MODE:
-			_vtol_schedule.flight_mode 	= TRANSITION_BACK;
+		case vtol_mode::FW_MODE:
+			_vtol_schedule.flight_mode = vtol_mode::TRANSITION_BACK;
 			_vtol_schedule.transition_start = hrt_absolute_time();
 			break;
 
-		case TRANSITION_FRONT_P1:
+		case vtol_mode::TRANSITION_FRONT_P1:
 			// failsafe into multicopter mode
-			_vtol_schedule.flight_mode = MC_MODE;
+			_vtol_schedule.flight_mode = vtol_mode::MC_MODE;
 			break;
 
-		case TRANSITION_BACK:
+		case vtol_mode::TRANSITION_BACK:
 			float time_since_trans_start = (float)(hrt_absolute_time() - _vtol_schedule.transition_start) * 1e-6f;
 
 			// check if we have reached pitch angle to switch to MC mode
 			if (pitch >= PITCH_TRANSITION_BACK || time_since_trans_start > _params->back_trans_duration) {
-				_vtol_schedule.flight_mode = MC_MODE;
+				_vtol_schedule.flight_mode = vtol_mode::MC_MODE;
 			}
 
 			break;
@@ -119,56 +119,69 @@ void Tailsitter::update_vtol_state()
 	} else {  // user switchig to FW mode
 
 		switch (_vtol_schedule.flight_mode) {
-		case MC_MODE:
+		case vtol_mode::MC_MODE:
 			// initialise a front transition
-			_vtol_schedule.flight_mode 	= TRANSITION_FRONT_P1;
+			_vtol_schedule.flight_mode = vtol_mode::TRANSITION_FRONT_P1;
 			_vtol_schedule.transition_start = hrt_absolute_time();
 			break;
 
-		case FW_MODE:
+		case vtol_mode::FW_MODE:
 			break;
 
-		case TRANSITION_FRONT_P1: {
+		case vtol_mode::TRANSITION_FRONT_P1: {
 
-				bool airspeed_condition_satisfied = _airspeed->indicated_airspeed_m_s >= _params->transition_airspeed;
-				airspeed_condition_satisfied |= _params->airspeed_disabled;
 
-				// check if we have reached airspeed  and pitch angle to switch to TRANSITION P2 mode
-				if ((airspeed_condition_satisfied && pitch <= PITCH_TRANSITION_FRONT_P1) || can_transition_on_ground()) {
-					_vtol_schedule.flight_mode = FW_MODE;
+				const bool airspeed_triggers_transition = PX4_ISFINITE(_airspeed_validated->calibrated_airspeed_m_s)
+						&& !_params->airspeed_disabled;
+
+				bool transition_to_fw = false;
+
+				if (pitch <= PITCH_TRANSITION_FRONT_P1) {
+					if (airspeed_triggers_transition) {
+						transition_to_fw = _airspeed_validated->calibrated_airspeed_m_s >= _params->transition_airspeed;
+
+					} else {
+						transition_to_fw = true;
+					}
+				}
+
+				transition_to_fw |= can_transition_on_ground();
+
+				if (transition_to_fw) {
+					_vtol_schedule.flight_mode = vtol_mode::FW_MODE;
 				}
 
 				break;
 			}
 
-		case TRANSITION_BACK:
+		case vtol_mode::TRANSITION_BACK:
 			// failsafe into fixed wing mode
-			_vtol_schedule.flight_mode = FW_MODE;
+			_vtol_schedule.flight_mode = vtol_mode::FW_MODE;
 			break;
 		}
 	}
 
 	// map tailsitter specific control phases to simple control modes
 	switch (_vtol_schedule.flight_mode) {
-	case MC_MODE:
-		_vtol_mode = ROTARY_WING;
+	case vtol_mode::MC_MODE:
+		_vtol_mode = mode::ROTARY_WING;
 		_vtol_vehicle_status->vtol_in_trans_mode = false;
 		_flag_was_in_trans_mode = false;
 		break;
 
-	case FW_MODE:
-		_vtol_mode = FIXED_WING;
+	case vtol_mode::FW_MODE:
+		_vtol_mode = mode::FIXED_WING;
 		_vtol_vehicle_status->vtol_in_trans_mode = false;
 		_flag_was_in_trans_mode = false;
 		break;
 
-	case TRANSITION_FRONT_P1:
-		_vtol_mode = TRANSITION_TO_FW;
+	case vtol_mode::TRANSITION_FRONT_P1:
+		_vtol_mode = mode::TRANSITION_TO_FW;
 		_vtol_vehicle_status->vtol_in_trans_mode = true;
 		break;
 
-	case TRANSITION_BACK:
-		_vtol_mode = TRANSITION_TO_MC;
+	case vtol_mode::TRANSITION_BACK:
+		_vtol_mode = mode::TRANSITION_TO_MC;
 		_vtol_vehicle_status->vtol_in_trans_mode = true;
 		break;
 	}
@@ -176,12 +189,12 @@ void Tailsitter::update_vtol_state()
 
 void Tailsitter::update_transition_state()
 {
-	float time_since_trans_start = (float)(hrt_absolute_time() - _vtol_schedule.transition_start) * 1e-6f;
+	const float time_since_trans_start = (float)(hrt_absolute_time() - _vtol_schedule.transition_start) * 1e-6f;
 
 	if (!_flag_was_in_trans_mode) {
 		_flag_was_in_trans_mode = true;
 
-		if (_vtol_schedule.flight_mode == TRANSITION_BACK) {
+		if (_vtol_schedule.flight_mode == vtol_mode::TRANSITION_BACK) {
 			// calculate rotation axis for transition.
 			_q_trans_start = Quatf(_v_att->q);
 			Vector3f z = -_q_trans_start.dcm_z();
@@ -198,7 +211,7 @@ void Tailsitter::update_transition_state()
 			// multirotor frame
 			_q_trans_start = _q_trans_start * Quatf(Eulerf(0, -M_PI_2_F, 0));
 
-		} else if (_vtol_schedule.flight_mode == TRANSITION_FRONT_P1) {
+		} else if (_vtol_schedule.flight_mode == vtol_mode::TRANSITION_FRONT_P1) {
 			// initial attitude setpoint for the transition should be with wings level
 			_q_trans_start = Eulerf(0.0f, _mc_virtual_att_sp->pitch_body, _mc_virtual_att_sp->yaw_body);
 			Vector3f x = Dcmf(Quatf(_v_att->q)) * Vector3f(1, 0, 0);
@@ -208,11 +221,17 @@ void Tailsitter::update_transition_state()
 		_q_trans_sp = _q_trans_start;
 	}
 
-	// tilt angle (zero if vehicle nose points up (hover))
-	float tilt = acosf(_q_trans_sp(0) * _q_trans_sp(0) - _q_trans_sp(1) * _q_trans_sp(1) - _q_trans_sp(2) * _q_trans_sp(
-				   2) + _q_trans_sp(3) * _q_trans_sp(3));
+	// ensure input quaternions are exactly normalized because acosf(1.00001) == NaN
+	_q_trans_sp.normalize();
 
-	if (_vtol_schedule.flight_mode == TRANSITION_FRONT_P1) {
+	// tilt angle (zero if vehicle nose points up (hover))
+	float cos_tilt = _q_trans_sp(0) * _q_trans_sp(0) - _q_trans_sp(1) * _q_trans_sp(1) - _q_trans_sp(2) *
+			 _q_trans_sp(2) + _q_trans_sp(3) * _q_trans_sp(3);
+	cos_tilt = cos_tilt >  1.0f ?  1.0f : cos_tilt;
+	cos_tilt = cos_tilt < -1.0f ? -1.0f : cos_tilt;
+	const float tilt = acosf(cos_tilt);
+
+	if (_vtol_schedule.flight_mode == vtol_mode::TRANSITION_FRONT_P1) {
 
 		const float trans_pitch_rate = M_PI_2_F / _params->front_trans_duration;
 
@@ -221,12 +240,12 @@ void Tailsitter::update_transition_state()
 						       time_since_trans_start * trans_pitch_rate)) * _q_trans_start;
 		}
 
-	} else if (_vtol_schedule.flight_mode == TRANSITION_BACK) {
+	} else if (_vtol_schedule.flight_mode == vtol_mode::TRANSITION_BACK) {
 
 		const float trans_pitch_rate = M_PI_2_F / _params->back_trans_duration;
 
-		if (!flag_idle_mc) {
-			flag_idle_mc = set_idle_mc();
+		if (!_flag_idle_mc) {
+			_flag_idle_mc = set_idle_mc();
 		}
 
 		if (tilt > 0.01f) {
@@ -249,7 +268,6 @@ void Tailsitter::update_transition_state()
 	_v_att_sp->yaw_body = euler_sp.psi();
 
 	_q_trans_sp.copyTo(_v_att_sp->q_d);
-	_v_att_sp->q_d_valid = true;
 }
 
 void Tailsitter::waiting_on_tecs()
@@ -262,11 +280,6 @@ void Tailsitter::update_fw_state()
 {
 	VtolType::update_fw_state();
 
-	// allow fw yawrate control via multirotor roll actuation. this is useful for vehicles
-	// which don't have a rudder to coordinate turns
-	if (_params->diff_thrust == 1) {
-		_mc_roll_weight = 1.0f;
-	}
 }
 
 /**
@@ -274,36 +287,39 @@ void Tailsitter::update_fw_state()
 */
 void Tailsitter::fill_actuator_outputs()
 {
-	_actuators_out_0->timestamp = hrt_absolute_time();
-	_actuators_out_0->timestamp_sample = _actuators_mc_in->timestamp_sample;
+	auto &mc_in = _actuators_mc_in->control;
+	auto &fw_in = _actuators_fw_in->control;
 
-	_actuators_out_1->timestamp = hrt_absolute_time();
+	auto &mc_out = _actuators_out_0->control;
+	auto &fw_out = _actuators_out_1->control;
+
+	mc_out[actuator_controls_s::INDEX_ROLL]  = mc_in[actuator_controls_s::INDEX_ROLL]  * _mc_roll_weight;
+	mc_out[actuator_controls_s::INDEX_PITCH] = mc_in[actuator_controls_s::INDEX_PITCH] * _mc_pitch_weight;
+	mc_out[actuator_controls_s::INDEX_YAW]   = mc_in[actuator_controls_s::INDEX_YAW]   * _mc_yaw_weight;
+
+	if (_vtol_schedule.flight_mode == vtol_mode::FW_MODE) {
+		mc_out[actuator_controls_s::INDEX_THROTTLE] = fw_in[actuator_controls_s::INDEX_THROTTLE];
+
+		/* allow differential thrust if enabled */
+		if (_params->diff_thrust == 1) {
+			mc_out[actuator_controls_s::INDEX_ROLL] = fw_in[actuator_controls_s::INDEX_YAW] * _params->diff_thrust_scale;
+		}
+
+	} else {
+		mc_out[actuator_controls_s::INDEX_THROTTLE] = mc_in[actuator_controls_s::INDEX_THROTTLE];
+	}
+
+	if (_params->elevons_mc_lock && _vtol_schedule.flight_mode == vtol_mode::MC_MODE) {
+		fw_out[actuator_controls_s::INDEX_ROLL]  = 0;
+		fw_out[actuator_controls_s::INDEX_PITCH] = 0;
+
+	} else {
+		fw_out[actuator_controls_s::INDEX_ROLL]  = fw_in[actuator_controls_s::INDEX_ROLL];
+		fw_out[actuator_controls_s::INDEX_PITCH] = fw_in[actuator_controls_s::INDEX_PITCH];
+	}
+
+	_actuators_out_0->timestamp_sample = _actuators_mc_in->timestamp_sample;
 	_actuators_out_1->timestamp_sample = _actuators_fw_in->timestamp_sample;
 
-	_actuators_out_0->control[actuator_controls_s::INDEX_ROLL] = _actuators_mc_in->control[actuator_controls_s::INDEX_ROLL]
-			* _mc_roll_weight;
-	_actuators_out_0->control[actuator_controls_s::INDEX_PITCH] =
-		_actuators_mc_in->control[actuator_controls_s::INDEX_PITCH] * _mc_pitch_weight;
-	_actuators_out_0->control[actuator_controls_s::INDEX_YAW] = _actuators_mc_in->control[actuator_controls_s::INDEX_YAW] *
-			_mc_yaw_weight;
-
-	if (_vtol_schedule.flight_mode == FW_MODE) {
-		_actuators_out_0->control[actuator_controls_s::INDEX_THROTTLE] =
-			_actuators_fw_in->control[actuator_controls_s::INDEX_THROTTLE];
-
-	} else {
-		_actuators_out_0->control[actuator_controls_s::INDEX_THROTTLE] =
-			_actuators_mc_in->control[actuator_controls_s::INDEX_THROTTLE];
-	}
-
-	if (_params->elevons_mc_lock && _vtol_schedule.flight_mode == MC_MODE) {
-		_actuators_out_1->control[actuator_controls_s::INDEX_ROLL] = 0;
-		_actuators_out_1->control[actuator_controls_s::INDEX_PITCH] = 0;
-
-	} else {
-		_actuators_out_1->control[actuator_controls_s::INDEX_ROLL] =
-			-_actuators_fw_in->control[actuator_controls_s::INDEX_ROLL];
-		_actuators_out_1->control[actuator_controls_s::INDEX_PITCH] =
-			_actuators_fw_in->control[actuator_controls_s::INDEX_PITCH];
-	}
+	_actuators_out_0->timestamp = _actuators_out_1->timestamp = hrt_absolute_time();
 }

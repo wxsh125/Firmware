@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *  Copyright (C) 2018-2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,11 @@
  *
  ****************************************************************************/
 
+/**
+ * @file test_microbench_hrt.cpp
+ * Tests for the microbench high resolution timer.
+ */
+
 #include <unit_test.h>
 
 #include <time.h>
@@ -39,8 +44,8 @@
 
 #include <drivers/drv_hrt.h>
 #include <perf/perf_counter.h>
-#include <px4_config.h>
-#include <px4_micro_hal.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/micro_hal.h>
 
 namespace MicroBenchHRT
 {
@@ -69,6 +74,7 @@ void unlock()
 		reset(); \
 		perf_counter_t p = perf_alloc(PC_ELAPSED, name); \
 		for (int i = 0; i < count; i++) { \
+			px4_usleep(1); \
 			lock(); \
 			perf_begin(p); \
 			op; \
@@ -138,6 +144,7 @@ bool MicroBenchHRT::time_px4_hrt()
 {
 	PERF("hrt_absolute_time()", u_64_out = hrt_absolute_time(), 1000);
 	PERF("hrt_elapsed_time()", u_64_out = hrt_elapsed_time(&u_64), 1000);
+	PERF("hrt_elapsed_time_atomic()", u_64_out = hrt_elapsed_time_atomic(&u_64), 1000);
 
 	return true;
 }

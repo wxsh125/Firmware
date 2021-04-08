@@ -42,8 +42,8 @@
 #include "hrt_test.h"
 
 #include <drivers/drv_hrt.h>
-#include <px4_log.h>
-#include <px4_time.h>
+#include <px4_platform_common/log.h>
+#include <px4_platform_common/time.h>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -71,13 +71,13 @@ int HRTTest::main()
 
 	hrt_abstime t = hrt_absolute_time();
 	px4_usleep(1000000);
-	hrt_abstime elt = hrt_elapsed_time(&t);
+	hrt_abstime elt = hrt_elapsed_time_atomic(&t);
 	PX4_INFO("Elapsed time %llu in 1 sec (usleep)\n", (unsigned long long)elt);
 	PX4_INFO("Start time %llu\n", (unsigned long long)t);
 
 	t = hrt_absolute_time();
 	px4_sleep(1);
-	elt = hrt_elapsed_time(&t);
+	elt = hrt_elapsed_time_atomic(&t);
 	PX4_INFO("Elapsed time %llu in 1 sec (sleep)\n", (unsigned long long)elt);
 	PX4_INFO("Start time %llu\n", (unsigned long long)t);
 

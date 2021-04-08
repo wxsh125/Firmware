@@ -269,6 +269,18 @@ PARAM_DEFINE_FLOAT(FW_CLMBOUT_DIFF, 10.0f);
 PARAM_DEFINE_FLOAT(FW_LND_ANG, 5.0f);
 
 /**
+ * Minimum pitch during takeoff.
+ *
+ * @unit deg
+ * @min -5.0
+ * @max 30.0
+ * @decimal 1
+ * @increment 0.5
+ * @group FW L1 Control
+ */
+PARAM_DEFINE_FLOAT(FW_TKO_PITCH_MIN, 10.0f);
+
+/**
  *
  *
  * @unit m
@@ -309,6 +321,7 @@ PARAM_DEFINE_FLOAT(FW_LND_TLALT, -1.0f);
 
 /**
  * Landing heading hold horizontal distance.
+ *
  * Set to 0 to disable heading hold.
  *
  * @unit m
@@ -334,19 +347,18 @@ PARAM_DEFINE_INT32(FW_LND_USETER, 0);
 /**
  * Early landing configuration deployment
  *
- * When set to 0/disabled, the landing configuration (flaps, landing airspeed, etc.) is only activated
- * on the final approach to landing. When set to 1/enabled, it is already activated when entering the
- * final loiter-down (loiter-to-alt) WP before the landing approach. This shifts the (often large)
+ * When disabled, the landing configuration (flaps, landing airspeed, etc.) is only activated
+ * on the final approach to landing. When enabled, it is already activated when entering the
+ * final loiter-down (loiter-to-alt) waypoint before the landing approach. This shifts the (often large)
  * altitude and airspeed errors caused by the configuration change away from the ground such that
  * these are not so critical. It also gives the controller enough time to adapt to the new
  * configuration such that the landing approach starts with a cleaner initial state.
  *
- * @value 0 Disable early land configuration deployment
- * @value 1 Enable early land configuration deployment
+ * @boolean
  *
  * @group FW L1 Control
  */
-PARAM_DEFINE_INT32(FW_LND_EARLYCFG, 1);
+PARAM_DEFINE_INT32(FW_LND_EARLYCFG, 0);
 
 /**
  * Flare, minimum pitch
@@ -395,12 +407,12 @@ PARAM_DEFINE_FLOAT(FW_LND_FL_PMAX, 15.0f);
 PARAM_DEFINE_FLOAT(FW_LND_AIRSPD_SC, 1.3f);
 
 /**
- * Throttle time constant factor for landing
+ * Altitude time constant factor for landing
  *
- * Set this parameter to <1.0 to make the TECS throttle loop react faster during
+ * Set this parameter to less than 1.0 to make TECS react faster to altitude errors during
  * landing than during normal flight (i.e. giving efficiency and low motor wear at
  * high altitudes but control accuracy during landing). During landing, the TECS
- * throttle time constant (FW_T_THRO_CONST) is multiplied by this value.
+ * altitude time constant (FW_T_ALT_TC) is multiplied by this value.
  *
  * @unit
  * @min 0.2
@@ -419,13 +431,13 @@ PARAM_DEFINE_FLOAT(FW_LND_THRTC_SC, 1.0f);
 
 
 /**
- * Minimum Airspeed
+ * Minimum Airspeed (CAS)
  *
- * If the airspeed falls below this value, the TECS controller will try to
+ * If the CAS (calibrated airspeed) falls below this value, the TECS controller will try to
  * increase airspeed more aggressively.
  *
  * @unit m/s
- * @min 0.0
+ * @min 0.5
  * @max 40
  * @decimal 1
  * @increment 0.5
@@ -434,13 +446,13 @@ PARAM_DEFINE_FLOAT(FW_LND_THRTC_SC, 1.0f);
 PARAM_DEFINE_FLOAT(FW_AIRSPD_MIN, 10.0f);
 
 /**
- * Maximum Airspeed
+ * Maximum Airspeed (CAS)
  *
- * If the airspeed is above this value, the TECS controller will try to decrease
+ * If the CAS (calibrated airspeed) is above this value, the TECS controller will try to decrease
  * airspeed more aggressively.
  *
  * @unit m/s
- * @min 0.0
+ * @min 0.5
  * @max 40
  * @decimal 1
  * @increment 0.5
@@ -449,12 +461,14 @@ PARAM_DEFINE_FLOAT(FW_AIRSPD_MIN, 10.0f);
 PARAM_DEFINE_FLOAT(FW_AIRSPD_MAX, 20.0f);
 
 /**
- * Cruise Airspeed
+ * Cruise Airspeed (CAS)
  *
- * The fixed wing controller tries to fly at this airspeed.
+ * The trim CAS (calibrated airspeed) of the vehicle. If an airspeed controller is active,
+ * this is the default airspeed setpoint that the controller will try to achieve if
+ * no other airspeed setpoint sources are present (e.g. through non-centered RC sticks).
  *
  * @unit m/s
- * @min 0.0
+ * @min 0.5
  * @max 40
  * @decimal 1
  * @increment 0.5
@@ -522,38 +536,6 @@ PARAM_DEFINE_FLOAT(FW_T_SINK_MIN, 2.0f);
 PARAM_DEFINE_FLOAT(FW_T_SINK_MAX, 5.0f);
 
 /**
- * TECS time constant
- *
- * This is the time constant of the TECS control algorithm (in seconds).
- * Smaller values make it faster to respond, larger values make it slower
- * to respond.
- *
- * @unit s
- * @min 1.0
- * @max 10.0
- * @decimal 1
- * @increment 0.5
- * @group FW TECS
- */
-PARAM_DEFINE_FLOAT(FW_T_TIME_CONST, 5.0f);
-
-/**
- * TECS Throttle time constant
- *
- * This is the time constant of the TECS throttle control algorithm (in seconds).
- * Smaller values make it faster to respond, larger values make it slower
- * to respond.
- *
- * @unit s
- * @min 1.0
- * @max 10.0
- * @decimal 1
- * @increment 0.5
- * @group FW TECS
- */
-PARAM_DEFINE_FLOAT(FW_T_THRO_CONST, 8.0f);
-
-/**
  * Throttle damping factor
  *
  * This is the damping gain for the throttle demand loop.
@@ -561,16 +543,16 @@ PARAM_DEFINE_FLOAT(FW_T_THRO_CONST, 8.0f);
  *
  * @min 0.0
  * @max 2.0
- * @decimal 1
+ * @decimal 2
  * @increment 0.1
  * @group FW TECS
  */
-PARAM_DEFINE_FLOAT(FW_T_THR_DAMP, 0.5f);
+PARAM_DEFINE_FLOAT(FW_T_THR_DAMP, 0.1f);
 
 /**
- * Integrator gain
+ * Integrator gain throttle
  *
- * This is the integrator gain on the control loop.
+ * This is the integrator gain on the throttle part of the control loop.
  * Increasing this gain increases the speed at which speed
  * and height offsets are trimmed out, but reduces damping and
  * increases overshoot. Set this value to zero to completely
@@ -582,7 +564,24 @@ PARAM_DEFINE_FLOAT(FW_T_THR_DAMP, 0.5f);
  * @increment 0.05
  * @group FW TECS
  */
-PARAM_DEFINE_FLOAT(FW_T_INTEG_GAIN, 0.1f);
+PARAM_DEFINE_FLOAT(FW_T_I_GAIN_THR, 0.3f);
+
+/**
+ * Integrator gain pitch
+ *
+ * This is the integrator gain on the pitch part of the control loop.
+ * Increasing this gain increases the speed at which speed
+ * and height offsets are trimmed out, but reduces damping and
+ * increases overshoot. Set this value to zero to completely
+ * disable all integrator action.
+ *
+ * @min 0.0
+ * @max 2.0
+ * @decimal 2
+ * @increment 0.05
+ * @group FW TECS
+ */
+PARAM_DEFINE_FLOAT(FW_T_I_GAIN_PIT, 0.1f);
 
 /**
  * Maximum vertical acceleration
@@ -593,7 +592,7 @@ PARAM_DEFINE_FLOAT(FW_T_INTEG_GAIN, 0.1f);
  * allows for reasonably aggressive pitch changes if required to recover
  * from under-speed conditions.
  *
- * @unit m/s/s
+ * @unit m/s^2
  * @min 1.0
  * @max 10.0
  * @decimal 1
@@ -601,24 +600,6 @@ PARAM_DEFINE_FLOAT(FW_T_INTEG_GAIN, 0.1f);
  * @group FW TECS
  */
 PARAM_DEFINE_FLOAT(FW_T_VERT_ACC, 7.0f);
-
-/**
- * Complementary filter "omega" parameter for height
- *
- * This is the cross-over frequency (in radians/second) of the complementary
- * filter used to fuse vertical acceleration and barometric height to obtain
- * an estimate of height rate and height. Increasing this frequency weights
- * the solution more towards use of the barometer, whilst reducing it weights
- * the solution more towards use of the accelerometer data.
- *
- * @unit rad/s
- * @min 1.0
- * @max 10.0
- * @decimal 1
- * @increment 0.5
- * @group FW TECS
- */
-PARAM_DEFINE_FLOAT(FW_T_HGT_OMEGA, 3.0f);
 
 /**
  * Complementary filter "omega" parameter for speed
@@ -690,22 +671,21 @@ PARAM_DEFINE_FLOAT(FW_T_SPDWEIGHT, 1.0f);
  *
  * @min 0.0
  * @max 2.0
- * @decimal 1
+ * @decimal 2
  * @increment 0.1
  * @group FW TECS
  */
-PARAM_DEFINE_FLOAT(FW_T_PTCH_DAMP, 0.0f);
+PARAM_DEFINE_FLOAT(FW_T_PTCH_DAMP, 0.1f);
 
 /**
- * Height rate proportional factor
+ * Altitude error time constant.
  *
- * @min 0.0
- * @max 1.0
+ * @min 2.0
  * @decimal 2
- * @increment 0.05
+ * @increment 0.5
  * @group FW TECS
  */
-PARAM_DEFINE_FLOAT(FW_T_HRATE_P, 0.05f);
+PARAM_DEFINE_FLOAT(FW_T_ALT_TC, 5.0f);
 
 /**
  * Height rate feed forward
@@ -716,15 +696,82 @@ PARAM_DEFINE_FLOAT(FW_T_HRATE_P, 0.05f);
  * @increment 0.05
  * @group FW TECS
  */
-PARAM_DEFINE_FLOAT(FW_T_HRATE_FF, 0.8f);
+PARAM_DEFINE_FLOAT(FW_T_HRATE_FF, 0.3f);
 
 /**
- * Speed rate P factor
+ * True airspeed error time constant.
+ *
+ * @min 2.0
+ * @decimal 2
+ * @increment 0.5
+ * @group FW TECS
+ */
+PARAM_DEFINE_FLOAT(FW_T_TAS_TC, 5.0f);
+
+/**
+ * Minimum groundspeed
+ *
+ * The controller will increase the commanded airspeed to maintain
+ * this minimum groundspeed to the next waypoint.
+ *
+ * @unit m/s
+ * @min 0.0
+ * @max 40
+ * @decimal 1
+ * @increment 0.5
+ * @group FW TECS
+ */
+PARAM_DEFINE_FLOAT(FW_GND_SPD_MIN, 5.0f);
+
+/**
+ * RC stick mapping fixed-wing.
+ *
+ * Set RC/joystick configuration for fixed-wing position and altitude controlled flight.
+ *
+ * @min 0
+ * @max 1
+ * @value 0 Normal stick configuration (airspeed on throttle stick, altitude on pitch stick)
+ * @value 1 Alternative stick configuration (altitude on throttle stick, airspeed on pitch stick)
+ * @group FW L1 Control
+ */
+PARAM_DEFINE_INT32(FW_POSCTL_INV_ST, 0);
+
+/**
+ * Specific total energy rate first order filter time constant.
+ *
+ * This filter is applied to the specific total energy rate used for throttle damping.
  *
  * @min 0.0
- * @max 2.0
+ * @max 2
  * @decimal 2
  * @increment 0.01
  * @group FW TECS
  */
-PARAM_DEFINE_FLOAT(FW_T_SRATE_P, 0.02f);
+PARAM_DEFINE_FLOAT(FW_T_STE_R_TC, 0.4f);
+
+
+/**
+ * True airspeed rate first order filter time constant.
+ *
+ * This filter is applied to the true airspeed rate.
+ *
+ * @min 0.0
+ * @max 2
+ * @decimal 2
+ * @increment 0.01
+ * @group FW TECS
+ */
+PARAM_DEFINE_FLOAT(FW_T_TAS_R_TC, 0.2f);
+
+
+/**
+ * Specific total energy balance rate feedforward gain.
+ *
+ *
+ * @min 0.5
+ * @max 3
+ * @decimal 2
+ * @increment 0.01
+ * @group FW TECS
+ */
+PARAM_DEFINE_FLOAT(FW_T_SEB_R_FF, 1.0f);

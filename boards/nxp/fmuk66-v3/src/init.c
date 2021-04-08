@@ -45,7 +45,8 @@
  * Included Files
  ****************************************************************************/
 
-#include <px4_config.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform/gpio.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -53,7 +54,6 @@
 #include <debug.h>
 #include <errno.h>
 
-#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -63,44 +63,28 @@
 
 #include <kinetis.h>
 #include <kinetis_uart.h>
-#include <chip/kinetis_uart.h>
+#include <hardware/kinetis_uart.h>
+#include <hardware/kinetis_sim.h>
 #include "board_config.h"
 
-#include "up_arch.h"
+#include "arm_arch.h"
 #include <arch/board/board.h>
 
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
-#include <systemlib/cpuload.h>
-#include <perf/perf_counter.h>
-#include <systemlib/err.h>
+
+#include <px4_arch/io_timer.h>
+#include <px4_platform_common/init.h>
+#include <px4_platform/board_dma_alloc.h>
 
 /****************************************************************************
  * Pre-Processor Definitions
  ****************************************************************************/
 
-/* Configuration ************************************************************/
-
-/* Debug ********************************************************************/
-
-#ifdef CONFIG_CPP_HAVE_VARARGS
-#  ifdef CONFIG_DEBUG
-#    define message(...) syslog(__VA_ARGS__)
-#  else
-#    define message(...) printf(__VA_ARGS__)
-#  endif
-#else
-#  ifdef CONFIG_DEBUG
-#    define message syslog
-#  else
-#    define message printf
-#  endif
-#endif
-
 /*
- * Ideally we'd be able to get these from up_internal.h,
+ * Ideally we'd be able to get these from arm_internal.h,
  * but since we want to be able to disable the NuttX use
  * of leds for system indication at will and there is no
  * separate switch, we need to build independent of the
@@ -132,10 +116,9 @@ __END_DECLS
 
 void board_on_reset(int status)
 {
-	/* configure the GPIO pins to outputs and keep them low */
-
-	const uint32_t gpio[] = PX4_GPIO_PWM_INIT_LIST;
-	board_gpio_init(gpio, arraySize(gpio));
+	for (int i = 0; i < 6; ++i) {
+		px4_arch_configgpio(PX4_MAKE_GPIO_INPUT(io_timer_channel_get_as_pwm_input(i)));
+	}
 
 	if (status >= 0) {
 		up_mdelay(6);
@@ -160,41 +143,6 @@ int board_read_VBUS_state(void)
 }
 
 /************************************************************************************
- * Name: board_rc_input
- *
- * Description:
- *   All boards my optionally provide this API to invert the Serial RC input.
- *   This is needed on SoCs that support the notion RXINV or TXINV as opposed to
- *   and external XOR controlled by a GPIO
- *
- ************************************************************************************/
-
-__EXPORT void board_rc_input(bool invert_on, uint32_t uxart_base)
-{
-
-	irqstate_t irqstate = px4_enter_critical_section();
-
-	uint8_t s2 =  getreg8(KINETIS_UART_S2_OFFSET + uxart_base);
-	uint8_t c3 =  getreg8(KINETIS_UART_C3_OFFSET + uxart_base);
-
-	/* {R|T}XINV bit fields can written any time */
-
-	if (invert_on) {
-		s2 |= (UART_S2_RXINV);
-		c3 |= (UART_C3_TXINV);
-
-	} else {
-		s2 &= ~(UART_S2_RXINV);
-		c3 &= ~(UART_C3_TXINV);
-	}
-
-	putreg8(s2, KINETIS_UART_S2_OFFSET + uxart_base);
-	putreg8(c3, KINETIS_UART_C3_OFFSET + uxart_base);
-
-	leave_critical_section(irqstate);
-}
-
-/************************************************************************************
  * Name: board_peripheral_reset
  *
  * Description:
@@ -206,7 +154,7 @@ __EXPORT void board_peripheral_reset(int ms)
 
 	/* wait for the peripheral rail to reach GND */
 	usleep(ms * 1000);
-	warnx("reset done, %d ms", ms);
+	syslog(LOG_DEBUG, "reset done, %d ms\n", ms);
 
 	/* re-enable power */
 
@@ -214,7 +162,7 @@ __EXPORT void board_peripheral_reset(int ms)
 }
 
 /************************************************************************************
- * Name: stm32_boardinitialize
+ * Name: kinetis_boardinitialize
  *
  * Description:
  *   All Kinetis architectures must provide the following entry point.  This entry point
@@ -232,7 +180,7 @@ kinetis_boardinitialize(void)
 	board_autoled_initialize();
 
 	const uint32_t gpio[] = PX4_GPIO_INIT_LIST;
-	board_gpio_init(gpio, arraySize(gpio));
+	px4_gpio_init(gpio, arraySize(gpio));
 
 	fmuk66_timer_initialize();
 
@@ -278,35 +226,13 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	VDD_ETH_EN(true);
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-
-	/* run C++ ctors before we go any further */
-
-	up_cxxinitialize();
-
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
-
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
-
-	param_init();
-
-	/* configure the high-resolution time/callout interface */
-	hrt_init();
+	px4_platform_init();
 
 	/* configure the DMA allocator */
 
 	if (board_dma_alloc_init() < 0) {
-		message("DMA alloc FAILED");
+		syslog(LOG_ERR, "DMA alloc FAILED\n");
 	}
-
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
 
 	/* set up the serial DMA polling */
 #ifdef SERIAL_HAVE_DMA
@@ -357,6 +283,26 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	}
 
 #endif
+
+#ifdef CONFIG_NETDEV_LATEINIT
+
+# ifdef CONFIG_KINETIS_ENET
+	kinetis_netinitialize(0);
+# endif
+
+# ifdef CONFIG_KINETIS_FLEXCAN0
+	kinetis_caninitialize(0);
+# endif
+
+# ifdef CONFIG_KINETIS_FLEXCAN1
+	kinetis_caninitialize(1);
+# endif
+
+#endif
+
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	return OK;
 }

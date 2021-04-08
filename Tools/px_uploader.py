@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 ############################################################################
 #
 #   Copyright (c) 2012-2017 PX4 Development Team. All rights reserved.
@@ -74,6 +74,9 @@ if sys.version_info[0] < 3:
 else:
     runningPython3 = True
 
+class FirmwareNotSuitableException(Exception):
+    def __init__(self, message):
+        super(FirmwareNotSuitableException, self).__init__(message)
 
 class firmware(object):
     '''Loads a firmware file'''
@@ -205,7 +208,7 @@ class uploader(object):
         self.window_max = 256
         self.window_per = 2  # Sync,<result>
         self.ackWindowedMode = False  # Assume Non Widowed mode for all USB CDC
-        self.port = serial.Serial(portname, baudrate_bootloader, timeout=0.5, write_timeout=0.5)
+        self.port = serial.Serial(portname, baudrate_bootloader, timeout=0.5, write_timeout=0)
         self.otp = b''
         self.sn = b''
         self.baudrate_bootloader = baudrate_bootloader
@@ -247,14 +250,7 @@ class uploader(object):
 
     def __send(self, c):
         # print("send " + binascii.hexlify(c))
-        while True:
-            try:
-                self.port.write(c)
-                break
-            except serial.SerialTimeoutException as e:
-                print("Write timeout (%s), trying again" % e)
-                time.sleep(0.04)
-                continue
+        self.port.write(c)
 
     def __recv(self, count=1):
         c = self.port.read(count)
@@ -291,13 +287,13 @@ class uploader(object):
             if (len(data) != count):
                 raise RuntimeError("Ack Window %i not %i " % (len(data), count))
             for i in range(0, len(data), 2):
-                if chr(data[i]) != self.INSYNC:
+                if bytes([data[i]]) != self.INSYNC:
                     raise RuntimeError("unexpected %s instead of INSYNC" % data[i])
-                if chr(data[i+1]) == self.INVALID:
+                if bytes([data[i+1]]) == self.INVALID:
                     raise RuntimeError("bootloader reports INVALID OPERATION")
-                if chr(data[i+1]) == self.FAILED:
+                if bytes([data[i+1]]) == self.FAILED:
                     raise RuntimeError("bootloader reports OPERATION FAILED")
-                if chr(data[i+1]) != self.OK:
+                if bytes([data[i+1]]) != self.OK:
                     raise RuntimeError("unexpected response 0x%x instead of OK" % ord(data[i+1]))
 
     # attempt to get back into sync with the bootloader
@@ -326,7 +322,7 @@ class uploader(object):
 
         except NotImplementedError:
             raise RuntimeError("Programing not supported for this version of silicon!\n"
-                               "See https://docs.px4.io/en/flight_controller/silicon_errata.html")
+                               "See https://docs.px4.io/master/en/flight_controller/silicon_errata.html")
         except RuntimeError:
             # timeout, no response yet
             return False
@@ -348,10 +344,11 @@ class uploader(object):
         try:
             self.__getSync(False)
         except:
-            # if it fails we are on a real Serial Port
-            self.ackWindowedMode = True
-
-        self.port.baudrate = self.baudrate_bootloader
+            # if it fails we are on a real serial port - only leave this enabled on Windows
+            if sys.platform.startswith('win'):
+                self.ackWindowedMode = True
+        finally:
+            self.port.baudrate = self.baudrate_bootloader
 
     # send the GET_DEVICE command and wait for an info parameter
     def __getInfo(self, param):
@@ -412,10 +409,10 @@ class uploader(object):
         deadline = time.time() + 30.0
         while time.time() < deadline:
 
-            # Draw progress bar (erase usually takes about 9 seconds to complete)
+            usualEraseDuration = 15.0
             estimatedTimeRemaining = deadline-time.time()
-            if estimatedTimeRemaining >= 9.0:
-                self.__drawProgressBar(label, 30.0-estimatedTimeRemaining, 9.0)
+            if estimatedTimeRemaining >= usualEraseDuration:
+                self.__drawProgressBar(label, 30.0-estimatedTimeRemaining, usualEraseDuration)
             else:
                 self.__drawProgressBar(label, 10.0, 10.0)
                 sys.stdout.write(" (timeout: %d seconds) " % int(deadline-time.time()))
@@ -430,17 +427,14 @@ class uploader(object):
     # send a PROG_MULTI command to write a collection of bytes
     def __program_multi(self, data, windowMode):
 
-        if runningPython3:
-            length = len(data).to_bytes(1, byteorder='big')
-        else:
-            length = chr(len(data))
+        length = len(data).to_bytes(1, byteorder='big')
 
         self.__send(uploader.PROG_MULTI)
         self.__send(length)
         self.__send(data)
         self.__send(uploader.EOC)
         if (not windowMode):
-            self.__getSync()
+            self.__getSync(False)
         else:
             # The following is done to have minimum delay on the transmission
             # of the ne fw. The per block cost of __getSync was about 16 mS per.
@@ -454,10 +448,7 @@ class uploader(object):
     # verify multiple bytes in flash
     def __verify_multi(self, data):
 
-        if runningPython3:
-            length = len(data).to_bytes(1, byteorder='big')
-        else:
-            length = chr(len(data))
+        length = len(data).to_bytes(1, byteorder='big')
 
         self.__send(uploader.READ_MULTI)
         self.__send(length)
@@ -574,13 +565,13 @@ class uploader(object):
         # Make sure we are doing the right thing
         start = time.time()
         if self.board_type != fw.property('board_id'):
-            msg = "Firmware not suitable for this board (board_type=%u board_id=%u)" % (
+            msg = "Firmware not suitable for this board (Firmware board_type=%u board_id=%u)" % (
                 self.board_type, fw.property('board_id'))
             print("WARNING: %s" % msg)
             if force:
                 print("FORCED WRITE, FLASHING ANYWAY!")
             else:
-                raise IOError(msg)
+                raise FirmwareNotSuitableException(msg)
 
         # Prevent uploads where the image would overflow the flash
         if self.fw_maxsize < fw.property('image_size'):
@@ -715,6 +706,9 @@ class uploader(object):
 
 
 def main():
+    # Python2 is EOL
+    if not runningPython3:
+        raise RuntimeError("Python 2 is not supported. Please try again using Python 3.")
 
     # Parse commandline arguments
     parser = argparse.ArgumentParser(description="Firmware uploader for the PX autopilot system.")
@@ -731,6 +725,29 @@ def main():
         print("==========================================================================================================")
         print("WARNING: You should uninstall ModemManager as it conflicts with any non-modem serial device (like Pixhawk)")
         print("==========================================================================================================")
+
+    # We need to check for pyserial because the import itself doesn't
+    # seem to fail, at least not on macOS.
+    pyserial_installed = False
+    try:
+        if serial.__version__:
+            pyserial_installed = True
+    except:
+        pass
+
+    try:
+        if serial.VERSION:
+            pyserial_installed = True
+    except:
+        pass
+
+    if not pyserial_installed:
+        print("Error: pyserial not installed!")
+        print("")
+        print("You may need to install it using:")
+        print("    pip3 install --user pyserial")
+        print("")
+        sys.exit(1)
 
     # Load the firmware file
     fw = firmware(args.firmware)
@@ -782,6 +799,7 @@ def main():
             baud_flightstack = [int(x) for x in args.baud_flightstack.split(',')]
 
             successful = False
+            unsuitable_board = False
             for port in portlist:
 
                 # print("Trying %s" % port)
@@ -812,7 +830,7 @@ def main():
                     continue
 
                 found_bootloader = False
-                while (True):
+                while True:
                     up.open()
 
                     # port is open, try talking to it
@@ -853,6 +871,11 @@ def main():
                     # print the error
                     print("\nERROR: %s" % ex.args)
 
+                except FirmwareNotSuitableException:
+                    unsuitable_board = True
+                    up.close()
+                    continue
+
                 except IOError:
                     up.close()
                     continue
@@ -866,6 +889,12 @@ def main():
                     sys.exit(0)
                 else:
                     sys.exit(1)
+
+            if unsuitable_board:
+                # If we land here, we went through all ports, did not flash any
+                # board and found at least one unsuitable board.
+                # Exit with 2, so a caller can distinguish from other errors
+                sys.exit(2)
 
             # Delay retries to < 20 Hz to prevent spin-lock from hogging the CPU
             time.sleep(0.05)

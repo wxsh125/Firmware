@@ -45,8 +45,8 @@
  * Included Files
  ****************************************************************************/
 
-#include <px4_config.h>
-#include <px4_tasks.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/tasks.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -54,7 +54,6 @@
 #include <debug.h>
 #include <errno.h>
 
-#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -72,11 +71,10 @@
 #include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
-#include <systemlib/cpuload.h>
-#include <perf/perf_counter.h>
-#include <systemlib/err.h>
 
-#include <parameters/param.h>
+#include <px4_arch/io_timer.h>
+#include <px4_platform_common/init.h>
+#include <px4_platform/board_dma_alloc.h>
 
 # if defined(FLASH_BASED_PARAMS)
 #  include <parameters/flashparams/flashfs.h>
@@ -86,26 +84,8 @@
  * Pre-Processor Definitions
  ****************************************************************************/
 
-/* Configuration ************************************************************/
-
-/* Debug ********************************************************************/
-
-#ifdef CONFIG_CPP_HAVE_VARARGS
-#  ifdef CONFIG_DEBUG
-#    define message(...) syslog(__VA_ARGS__)
-#  else
-#    define message(...) printf(__VA_ARGS__)
-#  endif
-#else
-#  ifdef CONFIG_DEBUG
-#    define message syslog
-#  else
-#    define message printf
-#  endif
-#endif
-
 /*
- * Ideally we'd be able to get these from up_internal.h,
+ * Ideally we'd be able to get these from arm_internal.h,
  * but since we want to be able to disable the NuttX use
  * of leds for system indication at will and there is no
  * separate switch, we need to build independent of the
@@ -148,13 +128,9 @@ __EXPORT void board_peripheral_reset(int ms)
 __EXPORT void board_on_reset(int status)
 {
 	/* configure the GPIO pins to outputs and keep them low */
-
-	stm32_configgpio(GPIO_GPIO0_OUTPUT);
-	stm32_configgpio(GPIO_GPIO1_OUTPUT);
-	stm32_configgpio(GPIO_GPIO2_OUTPUT);
-	stm32_configgpio(GPIO_GPIO3_OUTPUT);
-	//stm32_configgpio(GPIO_GPIO4_OUTPUT);
-	//stm32_configgpio(GPIO_GPIO5_OUTPUT);
+	for (int i = 0; i < DIRECT_PWM_OUTPUT_CHANNELS; ++i) {
+		px4_arch_configgpio(io_timer_channel_get_gpio_output(i));
+	}
 
 	/* On resets invoked from system (not boot) insure we establish a low
 	 * output state (discharge the pins) on PWM pins before they become inputs.
@@ -259,36 +235,13 @@ static struct spi_dev_s *spi3;
 
 __EXPORT int board_app_initialize(uintptr_t arg)
 {
-
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-
-	/* run C++ ctors before we go any further */
-
-	up_cxxinitialize();
-
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
-
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
-
-	/* configure the high-resolution time/callout interface */
-	hrt_init();
-
-	param_init();
+	px4_platform_init();
 
 	/* configure the DMA allocator */
 
 	if (board_dma_alloc_init() < 0) {
-		message("DMA alloc FAILED");
+		syslog(LOG_ERR, "DMA alloc FAILED\n");
 	}
-
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
 
 	/* set up the serial DMA polling */
 	static struct hrt_call serial_dma_call;
@@ -322,7 +275,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	spi1 = stm32_spibus_initialize(1);
 
 	if (!spi1) {
-		message("[boot] FAILED to initialize SPI port 1\n");
+		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port 1\n");
 		led_on(LED_BLUE);
 		return -ENODEV;
 	}
@@ -331,7 +284,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETFREQUENCY(spi1, 10000000);
 	SPI_SETBITS(spi1, 8);
 	SPI_SETMODE(spi1, SPIDEV_MODE3);
-	SPI_SELECT(spi1, PX4_SPIDEV_MPU, false);
 	up_udelay(20);
 
 	// SPI2: SDCard
@@ -339,7 +291,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	spi2 = stm32_spibus_initialize(CONFIG_NSH_MMCSDSPIPORTNO);
 
 	if (!spi2) {
-		message("[boot] FAILED to initialize SPI port %d\n", CONFIG_NSH_MMCSDSPIPORTNO);
+		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port %d\n", CONFIG_NSH_MMCSDSPIPORTNO);
 		led_on(LED_BLUE);
 		return -ENODEV;
 	}
@@ -349,7 +301,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	if (result != OK) {
 		led_on(LED_BLUE);
-		message("[boot] FAILED to bind SPI port 2 to the MMCSD driver\n");
+		syslog(LOG_ERR, "[boot] FAILED to bind SPI port 2 to the MMCSD driver\n");
 		return -ENODEV;
 	}
 
@@ -360,7 +312,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	spi3 = stm32_spibus_initialize(3);
 
 	if (!spi3) {
-		message("[boot] FAILED to initialize SPI port 3\n");
+		syslog(LOG_ERR, "[boot] FAILED to initialize SPI port 3\n");
 		led_on(LED_BLUE);
 		return -ENODEV;
 	}
@@ -374,7 +326,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETFREQUENCY(spi3, 10 * 1000 * 1000);
 	SPI_SETBITS(spi3, 8);
 	SPI_SETMODE(spi3, SPIDEV_MODE3);
-	SPI_SELECT(spi3, PX4_SPIDEV_BARO, false);
 	up_udelay(20);
 
 #if defined(FLASH_BASED_PARAMS)
@@ -387,13 +338,16 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	result = parameter_flashfs_init(params_sector_map, NULL, 0);
 
 	if (result != OK) {
-		message("[boot] FAILED to init params in FLASH %d\n", result);
+		syslog(LOG_ERR, "[boot] FAILED to init params in FLASH %d\n", result);
 		led_on(LED_AMBER);
 		return -ENODEV;
 	}
 
 #endif
 
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	return OK;
 }

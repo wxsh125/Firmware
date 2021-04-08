@@ -33,11 +33,13 @@
 
 #include "log_writer_file.h"
 #include "messages.h"
+
 #include <fcntl.h>
 #include <string.h>
+#include <errno.h>
 
 #include <mathlib/mathlib.h>
-#include <px4_posix.h>
+#include <px4_platform_common/posix.h>
 #ifdef __PX4_NUTTX
 #include <systemlib/hardfault_log.h>
 #endif /* __PX4_NUTTX */
@@ -81,6 +83,18 @@ LogWriterFile::~LogWriterFile()
 
 void LogWriterFile::start_log(LogType type, const char *filename)
 {
+	// At this point we don't expect the file to be open, but it can happen for very fast consecutive stop & start
+	// calls. In that case we wait for the thread to close the file first.
+	lock();
+
+	while (_buffers[(int)type].fd() >= 0) {
+		unlock();
+		system_usleep(5000);
+		lock();
+	}
+
+	unlock();
+
 	if (type == LogType::Full) {
 		// register the current file with the hardfault handler: if the system crashes,
 		// the hardfault handler will append the crash log to that file on the next reboot.
@@ -147,7 +161,7 @@ int LogWriterFile::thread_start()
 	param.sched_priority = SCHED_PRIORITY_DEFAULT - 40;
 	(void)pthread_attr_setschedparam(&thr_attr, &param);
 
-	pthread_attr_setstacksize(&thr_attr, PX4_STACK_ADJUSTED(1150));
+	pthread_attr_setstacksize(&thr_attr, PX4_STACK_ADJUSTED(1170));
 
 	int ret = pthread_create(&_thread, &thr_attr, &LogWriterFile::run_helper, this);
 	pthread_attr_destroy(&thr_attr);
@@ -176,7 +190,7 @@ void *LogWriterFile::run_helper(void *context)
 {
 	px4_prctl(PR_SET_NAME, "log_writer_file", px4_getpid());
 
-	reinterpret_cast<LogWriterFile *>(context)->run();
+	static_cast<LogWriterFile *>(context)->run();
 	return nullptr;
 }
 
@@ -281,8 +295,12 @@ void LogWriterFile::run()
 			/* Wait for a call to notify(), which indicates new data is available.
 			 * Note that at this point there could already be new data available (because of a longer write),
 			 * and calling pthread_cond_wait() will still wait for the next notify(). But this is generally
-			 * not an issue because notify() is called regularly. */
-			pthread_cond_wait(&_cv, &_mtx);
+			 * not an issue because notify() is called regularly.
+			 * If the logger was switched off in the meantime, do not wait for data, instead run this loop
+			 * once more to write remaining data and close the file. */
+			if (_buffers[0]._should_run) {
+				pthread_cond_wait(&_cv, &_mtx);
+			}
 		}
 
 		// go back to idle
@@ -393,7 +411,7 @@ void LogWriterFile::LogFileBuffer::write_no_check(void *ptr, size_t size)
 {
 	size_t n = _buffer_size - _head;	// bytes to end of the buffer
 
-	uint8_t *buffer_c = reinterpret_cast<uint8_t *>(ptr);
+	uint8_t *buffer_c = static_cast<uint8_t *>(ptr);
 
 	if (size > n) {
 		// Message goes over the end of the buffer
@@ -439,7 +457,7 @@ bool LogWriterFile::LogFileBuffer::start_log(const char *filename)
 	}
 
 	if (_buffer == nullptr) {
-		_buffer = new uint8_t[_buffer_size];
+		_buffer = (uint8_t *) px4_cache_aligned_alloc(_buffer_size);
 
 		if (_buffer == nullptr) {
 			PX4_ERR("Can't create log buffer");
